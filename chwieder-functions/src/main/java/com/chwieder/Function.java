@@ -9,25 +9,32 @@ import com.microsoft.azure.functions.annotation.AuthorizationLevel;
 import com.microsoft.azure.functions.annotation.FunctionName;
 import com.microsoft.azure.functions.annotation.HttpTrigger;
 
-import java.util.Optional;
+import reactor.core.publisher.Mono;
+
+// import java.util.Optional;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Azure Functions with HTTP Trigger.
  */
 public class Function {
+
     /**
      * This function listens at endpoint "/api/HttpExample". Two ways to invoke it using "curl" command in bash:
      * 1. curl -d "HTTP Body" {your host}/api/HttpExample
      * 2. curl "{your host}/api/HttpExample?name=HTTP%20Query"
      */
-    @FunctionName("HttpExample")
-    public HttpResponseMessage run(
+    @FunctionName("Hello")
+    public HttpResponseMessage hello(
             @HttpTrigger(
                 name = "req",
                 methods = {HttpMethod.GET, HttpMethod.POST},
                 authLevel = AuthorizationLevel.ANONYMOUS)
                 HttpRequestMessage<Optional<String>> request,
-            final ExecutionContext context) {
+            final ExecutionContext context
+    ) {
+
         context.getLogger().info("Java HTTP trigger processed a request.");
 
         // Parse query parameter
@@ -39,5 +46,49 @@ public class Function {
         } else {
             return request.createResponseBuilder(HttpStatus.OK).body("Hello, " + name).build();
         }
+    }
+
+    @FunctionName("Cosmos")
+    public HttpResponseMessage cosmos(
+            @HttpTrigger(name = "req", methods = {HttpMethod.GET}, authLevel = AuthorizationLevel.ANONYMOUS) HttpRequestMessage<Optional<String>> request,
+            final ExecutionContext context) {
+        var repo = new TableRepository();
+        var guid = UUID.randomUUID().toString();
+
+        var createStart = System.nanoTime();
+        repo.create(guid, guid);
+        double createMs = (System.nanoTime() - createStart * 1.0) / 1000000;
+
+        var readStart = System.nanoTime();
+        repo.read(guid, guid);
+        double readMs = (System.nanoTime() - readStart * 1.0) / 1000000;
+
+        var deleteStart = System.nanoTime();
+        repo.delete(guid, guid);
+        double deleteMs = (System.nanoTime() - deleteStart * 1.0) / 1000000;
+
+        return request.createResponseBuilder(HttpStatus.OK).body(new Output(createMs, readMs, deleteMs)).build();
+    }
+
+    @FunctionName("CosmosAsync")
+    public HttpResponseMessage cosmosAsync(
+            @HttpTrigger(name = "req", methods = {HttpMethod.GET}, authLevel = AuthorizationLevel.ANONYMOUS) HttpRequestMessage<Optional<String>> request,
+            final ExecutionContext context) {
+        var repo = new TableRepositoryAsync();
+        var guid = UUID.randomUUID().toString();
+
+        var createStart = System.nanoTime();
+        return repo.create(guid, guid).then(Mono.fromCallable(() -> {
+            var createMs = (System.nanoTime() - createStart * 1.0) / 1000000;
+            var readStart = System.nanoTime();
+            return repo.read(guid, guid).then(Mono.fromCallable(() -> {
+                var readMs = (System.nanoTime() - readStart * 1.0) / 1000000;
+                var deleteStart = System.nanoTime();
+                return repo.delete(guid, guid).then(Mono.fromCallable(() -> {
+                    var deleteMs = (System.nanoTime() - deleteStart * 1.0) / 1000000;
+                    return request.createResponseBuilder(HttpStatus.OK).body(new Output(createMs, readMs, deleteMs)).build();
+                })).block();
+            })).block();
+        })).block();
     }
 }
